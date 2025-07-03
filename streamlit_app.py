@@ -14,9 +14,13 @@ import time
 
 # Download required NLTK data
 try:
-    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('tokenizers/punkt_tab')
 except LookupError:
-    nltk.download('punkt')
+    try:
+        nltk.download('punkt_tab')
+    except:
+        # Fallback to older punkt if punkt_tab fails
+        nltk.download('punkt')
 
 class PlagiarismDetector:
     def __init__(self, model_name='all-MiniLM-L6-v2'):
