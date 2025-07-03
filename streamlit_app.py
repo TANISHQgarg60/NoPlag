@@ -149,10 +149,10 @@ class PlagiarismDetector:
     
     def find_similar_sentences(self, source_sentences: List[str], 
                              target_sentences: List[str],
-                             threshold: float = 0.8) -> List[Dict]:
+                             threshold: float = 0.8) -> Tuple[List[Dict], int, int]:
         """Find similar sentences between source and target texts."""
         if not source_sentences or not target_sentences:
-            return []
+            return [], 0, len(target_sentences) if target_sentences else 0
         
         # Compute embeddings
         source_embeddings = self.compute_embeddings(source_sentences)
