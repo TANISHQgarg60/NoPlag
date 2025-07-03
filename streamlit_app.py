@@ -396,20 +396,37 @@ def main():
                 
                 source_sentences = detector.extract_sentences(source_text)
                 if source_sentences:
-                    matches, unique_plagiarized, total_sentences = detector.find_similar_sentences(
-                        source_sentences, target_sentences, threshold
-                    )
-                    results['cross_document'] = {
-                        'matches': matches,
-                        'unique_plagiarized': unique_plagiarized,
-                        'total_sentences': total_sentences
-                    }
-                    
-                    # Similarity distribution
-                    similarities = detector.analyze_similarity_distribution(
-                        source_sentences, target_sentences
-                    )
-                    results['similarities'] = similarities
+                    try:
+                        result = detector.find_similar_sentences(
+                            source_sentences, target_sentences, threshold
+                        )
+                        # Handle different return formats
+                        if isinstance(result, tuple) and len(result) == 3:
+                            matches, unique_plagiarized, total_sentences = result
+                        else:
+                            # Fallback if method returns old format
+                            matches = result if isinstance(result, list) else []
+                            unique_plagiarized = len(set([m['target_index'] for m in matches]))
+                            total_sentences = len(target_sentences)
+                        
+                        results['cross_document'] = {
+                            'matches': matches,
+                            'unique_plagiarized': unique_plagiarized,
+                            'total_sentences': total_sentences
+                        }
+                        
+                        # Similarity distribution
+                        similarities = detector.analyze_similarity_distribution(
+                            source_sentences, target_sentences
+                        )
+                        results['similarities'] = similarities
+                    except Exception as e:
+                        st.error(f"Error in cross-document analysis: {str(e)}")
+                        results['cross_document'] = {
+                            'matches': [],
+                            'unique_plagiarized': 0,
+                            'total_sentences': len(target_sentences)
+                        }
             
             progress_bar.progress(100)
             status_text.text("Analysis complete!")
