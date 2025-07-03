@@ -739,6 +739,7 @@ def main():
                                     st.markdown("---")
                 
                 # Detailed matches table
+                # Detailed matches table
                 st.subheader("📋 Detailed Web Matches")
                 
                 all_web_matches = []
