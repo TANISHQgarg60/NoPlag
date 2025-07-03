@@ -14,6 +14,11 @@ import time
 import requests
 from collections import Counter
 import math
+from urllib.parse import quote_plus
+import json
+from bs4 import BeautifulSoup
+import urllib.request
+from urllib.error import URLError, HTTPError
 
 # Download required NLTK data
 try:
@@ -26,6 +31,117 @@ except LookupError:
         nltk.download('punkt')
 
 class AIDetector:
+    """Web search functionality for plagiarism detection."""
+    
+    def __init__(self):
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+    
+    def search_bing(self, query: str, num_results: int = 5) -> List[Dict]:
+        """Search Bing for potential sources."""
+        try:
+            # Using Bing search (you could also use other search engines)
+            search_url = f"https://www.bing.com/search?q={quote_plus(query)}"
+            
+            response = requests.get(search_url, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            results = []
+            
+            # Extract search results
+            for result in soup.find_all('li', class_='b_algo')[:num_results]:
+                try:
+                    title_elem = result.find('h2')
+                    url_elem = result.find('a')
+                    snippet_elem = result.find('p') or result.find('div', class_='b_caption')
+                    
+                    if title_elem and url_elem:
+                        title = title_elem.get_text(strip=True)
+                        url = url_elem.get('href', '')
+                        snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
+                        
+                        # Skip if URL is not valid
+                        if not url.startswith('http'):
+                            continue
+                            
+                        results.append({
+                            'title': title,
+                            'url': url,
+                            'snippet': snippet
+                        })
+                except Exception as e:
+                    continue
+            
+            return results
+            
+        except Exception as e:
+            st.warning(f"Web search failed: {str(e)}")
+            return []
+    
+    def extract_text_from_url(self, url: str) -> str:
+        """Extract text content from a URL."""
+        try:
+            response = requests.get(url, headers=self.headers, timeout=15)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Remove script and style elements
+            for script in soup(["script", "style"]):
+                script.decompose()
+            
+            # Get text content
+            text = soup.get_text()
+            
+            # Clean up whitespace
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = ' '.join(chunk for chunk in chunks if chunk)
+            
+            return text[:10000]  # Limit to first 10k characters
+            
+        except Exception as e:
+            return ""
+    
+    def search_for_plagiarism(self, sentences: List[str], num_sources: int = 5) -> List[Dict]:
+        """Search the web for potential plagiarism sources."""
+        web_sources = []
+        
+        # Select representative sentences for searching
+        search_sentences = sentences[:3] if len(sentences) > 3 else sentences
+        
+        for i, sentence in enumerate(search_sentences):
+            # Create search query from sentence (use first 60 characters)
+            query = sentence[:60].strip()
+            if len(query) < 20:  # Skip very short sentences
+                continue
+                
+            # Search for this sentence
+            search_results = self.search_bing(f'"{query}"', num_results=3)
+            
+            for result in search_results:
+                if result['url'] not in [ws['url'] for ws in web_sources]:
+                    # Extract content from URL
+                    content = self.extract_text_from_url(result['url'])
+                    if content:
+                        web_sources.append({
+                            'title': result['title'],
+                            'url': result['url'],
+                            'content': content,
+                            'snippet': result['snippet'],
+                            'search_sentence': sentence
+                        })
+            
+            # Don't exceed the limit
+            if len(web_sources) >= num_sources:
+                break
+                
+            # Add delay between searches to be respectful
+            time.sleep(1)
+        
+        return web_sources[:num_sources]
     """Simple AI-generated text detector using linguistic patterns."""
     
     def __init__(self):
@@ -95,6 +211,7 @@ class PlagiarismDetector:
         """Initialize the plagiarism detector with a BERT model."""
         self.model = SentenceTransformer(model_name)
         self.ai_detector = AIDetector()
+        self.web_searcher = WebSearcher()
         self.threshold = 0.8
         
     def preprocess_text(self, text: str) -> str:
@@ -141,11 +258,30 @@ class PlagiarismDetector:
         
         return sorted(matches, key=lambda x: x['similarity'], reverse=True)
     
-    def search_web_sources(self, text: str, max_results: int = 5) -> List[Dict]:
-        """Search for potential web sources (placeholder - would need actual search API)."""
-        # This is a placeholder for web search functionality
-        # In a real implementation, you'd integrate with search APIs like Google, Bing, etc.
-        return []
+    def search_web_sources(self, sentences: List[str], num_sources: int = 5) -> List[Dict]:
+        """Search for potential web sources and analyze them."""
+        web_sources = self.web_searcher.search_for_plagiarism(sentences, num_sources)
+        
+        plagiarism_results = []
+        
+        for source in web_sources:
+            source_sentences = self.extract_sentences(source['content'])
+            if source_sentences:
+                # Find matches between target sentences and web source
+                matches, unique_plagiarized, total_sentences = self.find_similar_sentences(
+                    source_sentences, sentences, self.threshold
+                )
+                
+                if matches:
+                    plagiarism_results.append({
+                        'source': source,
+                        'matches': matches,
+                        'unique_plagiarized': unique_plagiarized,
+                        'total_sentences': total_sentences,
+                        'source_sentences': source_sentences
+                    })
+        
+        return plagiarism_results
     
     def find_similar_sentences(self, source_sentences: List[str], 
                              target_sentences: List[str],
@@ -279,9 +415,23 @@ def main():
     
     detection_mode = st.sidebar.selectbox(
         "Detection Mode",
-        ["Compare Two Texts", "Self-Plagiarism Detection", "AI Content Detection", "All Analysis"],
+        ["Compare Two Texts", "Web Plagiarism Detection", "Self-Plagiarism Detection", "AI Content Detection", "All Analysis"],
         help="Choose the type of analysis to perform"
     )
+    
+    enable_web_search = st.sidebar.checkbox(
+        "Enable Web Search",
+        value=True,
+        help="Search the internet for potential plagiarism sources"
+    )
+    
+    num_web_sources = st.sidebar.slider(
+        "Number of Web Sources",
+        min_value=1,
+        max_value=10,
+        value=5,
+        help="Number of web sources to check for plagiarism"
+    ) if enable_web_search else 5
     
     show_distribution = st.sidebar.checkbox(
         "Show Similarity Distribution",
@@ -314,6 +464,17 @@ def main():
                 height=300,
                 placeholder="Paste your target text here..."
             )
+    
+    elif detection_mode == "Web Plagiarism Detection":
+        st.header("Text to Check Against Web Sources")
+        target_text = st.text_area(
+            "Enter the text to check for plagiarism:",
+            height=400,
+            placeholder="Paste your text here. The system will search the web for potential sources..."
+        )
+        source_text = ""  # No source text needed for web search
+        
+        st.info("🌐 This mode will search the internet for potential plagiarism sources automatically.")
     
     elif detection_mode in ["Self-Plagiarism Detection", "AI Content Detection", "All Analysis"]:
         st.header("Text to Analyze")
@@ -370,10 +531,24 @@ def main():
             
             results = {}
             
+            # Web plagiarism detection
+            if (detection_mode in ["Web Plagiarism Detection", "All Analysis"] and 
+                enable_web_search and not source_text):
+                
+                status_text.text("🌐 Searching web for potential sources...")
+                progress_bar.progress(30)
+                
+                web_results = detector.search_web_sources(target_sentences, num_web_sources)
+                results['web_plagiarism'] = web_results
+                
+                if web_results:
+                    status_text.text("📝 Analyzing web sources...")
+                    progress_bar.progress(50)
+            
             # AI Detection
             if detection_mode in ["AI Content Detection", "All Analysis"]:
-                status_text.text("Analyzing AI-generated content...")
-                progress_bar.progress(40)
+                status_text.text("🤖 Analyzing AI-generated content...")
+                progress_bar.progress(60)
                 
                 ai_probability = detector.ai_detector.calculate_ai_probability(target_text)
                 results['ai_detection'] = {
@@ -383,15 +558,15 @@ def main():
             
             # Self-plagiarism detection
             if detection_mode in ["Self-Plagiarism Detection", "All Analysis"]:
-                status_text.text("Detecting self-plagiarism...")
-                progress_bar.progress(60)
+                status_text.text("🔄 Detecting self-plagiarism...")
+                progress_bar.progress(70)
                 
                 self_matches = detector.detect_self_plagiarism(target_sentences, threshold)
                 results['self_plagiarism'] = self_matches
             
             # Cross-document plagiarism detection
             if detection_mode in ["Compare Two Texts", "All Analysis"] and source_text:
-                status_text.text("Comparing with source text...")
+                status_text.text("📋 Comparing with source text...")
                 progress_bar.progress(80)
                 
                 source_sentences = detector.extract_sentences(source_text)
@@ -438,13 +613,21 @@ def main():
             st.header("📊 Analysis Results")
             
             # Summary metrics
-            cols = st.columns(4)
+            cols = st.columns(5)
             
             with cols[0]:
                 if 'cross_document' in results:
                     plagiarism_percentage = (results['cross_document']['unique_plagiarized'] / 
                                            results['cross_document']['total_sentences']) * 100
-                    st.metric("Plagiarism %", f"{plagiarism_percentage:.1f}%")
+                    st.metric("Cross-Doc Plagiarism %", f"{plagiarism_percentage:.1f}%")
+                elif 'web_plagiarism' in results and results['web_plagiarism']:
+                    # Calculate overall web plagiarism percentage
+                    all_matches = []
+                    for web_result in results['web_plagiarism']:
+                        all_matches.extend([m['target_index'] for m in web_result['matches']])
+                    unique_web_matches = len(set(all_matches))
+                    web_plag_percentage = (unique_web_matches / len(target_sentences)) * 100
+                    st.metric("Web Plagiarism %", f"{web_plag_percentage:.1f}%")
                 elif 'self_plagiarism' in results:
                     self_plag_sentences = len(set([m['index_1'] for m in results['self_plagiarism']] + 
                                                 [m['index_2'] for m in results['self_plagiarism']]))
@@ -459,11 +642,28 @@ def main():
             with cols[2]:
                 if 'cross_document' in results:
                     st.metric("Cross-Doc Matches", len(results['cross_document']['matches']))
+                elif 'web_plagiarism' in results:
+                    total_web_matches = sum(len(wr['matches']) for wr in results['web_plagiarism'])
+                    st.metric("Web Matches", total_web_matches)
                 if 'self_plagiarism' in results:
-                    st.metric("Self-Plagiarism Matches", len(results['self_plagiarism']))
+                    st.metric("Self-Matches", len(results['self_plagiarism']))
             
             with cols[3]:
+                if 'web_plagiarism' in results:
+                    st.metric("Web Sources Found", len(results['web_plagiarism']))
                 st.metric("Total Sentences", len(target_sentences))
+            
+            with cols[4]:
+                if 'web_plagiarism' in results and results['web_plagiarism']:
+                    # Show highest similarity from web sources
+                    max_similarity = max(
+                        max([m['similarity'] for m in wr['matches']], default=0)
+                        for wr in results['web_plagiarism']
+                    )
+                    st.metric("Max Web Similarity", f"{max_similarity:.3f}")
+                elif 'cross_document' in results and results['cross_document']['matches']:
+                    max_similarity = max(m['similarity'] for m in results['cross_document']['matches'])
+                    st.metric("Max Similarity", f"{max_similarity:.3f}")
             
             # AI Detection Results
             if 'ai_detection' in results:
@@ -505,7 +705,75 @@ def main():
                     else:
                         st.success(f"✅ Low probability ({ai_data['probability']:.1%}) of AI-generated content")
             
-            # Self-plagiarism results
+            # Web plagiarism results
+            if 'web_plagiarism' in results and results['web_plagiarism']:
+                st.subheader("🌐 Web Plagiarism Detection Results")
+                
+                # Overview of web sources
+                st.write("**Sources Found:**")
+                for i, web_result in enumerate(results['web_plagiarism'], 1):
+                    source = web_result['source']
+                    matches_count = len(web_result['matches'])
+                    if matches_count > 0:
+                        similarity_scores = [m['similarity'] for m in web_result['matches']]
+                        avg_similarity = np.mean(similarity_scores)
+                        max_similarity = max(similarity_scores)
+                        
+                        with st.expander(f"🔍 Source {i}: {source['title']} ({matches_count} matches)"):
+                            col1, col2 = st.columns([3, 1])
+                            with col1:
+                                st.markdown(f"**URL:** {source['url']}")
+                                st.markdown(f"**Snippet:** {source['snippet']}")
+                                st.markdown(f"**Matches:** {matches_count}")
+                                st.markdown(f"**Avg Similarity:** {avg_similarity:.3f}")
+                                st.markdown(f"**Max Similarity:** {max_similarity:.3f}")
+                            
+                            with col2:
+                                st.markdown("**Sample Matches:**")
+                                for j, match in enumerate(web_result['matches'][:3]):
+                                    st.markdown(f"**Match {j+1}** (sim: {match['similarity']:.3f})")
+                                    st.markdown(f"*Your text:* {match['target_sentence'][:100]}...")
+                                    st.markdown(f"*Source:* {match['source_sentence'][:100]}...")
+                                    st.markdown("---")
+                
+                # Detailed matches table
+                st.subheader("📋 Detailed Web Matches")
+                
+                all_web_matches = []
+                for web_result in results['web_plagiarism']:
+                    for match in web_result['matches']:
+                        all_web_matches.append({
+                            'Source': web_result['source']['title'][:50] + "...",
+                            'URL': web_result['source']['url'],
+                            'Similarity': f"{match['similarity']:.3f}",
+                            'Your Text': match['target_sentence'][:100] + "...",
+                            'Source Text': match['source_sentence'][:100] + "..."
+                        })
+                
+                if all_web_matches:
+                    # Sort by similarity
+                    all_web_matches.sort(key=lambda x: float(x['Similarity']), reverse=True)
+                    
+                    # Show top 20 matches
+                    matches_df = pd.DataFrame(all_web_matches[:20])
+                    st.dataframe(matches_df, use_container_width=True)
+                    
+                    if len(all_web_matches) > 20:
+                        st.info(f"Showing top 20 matches out of {len(all_web_matches)} total web matches.")
+                
+                # Web source highlighting
+                if show_highlights:
+                    st.subheader("📝 Text with Web Matches Highlighted")
+                    
+                    all_target_indices = []
+                    for web_result in results['web_plagiarism']:
+                        all_target_indices.extend([m['target_index'] for m in web_result['matches']])
+                    
+                    highlighted_target = highlight_matches(
+                        target_text, target_sentences, all_target_indices, "#ff6b6b"
+                    )
+                    st.markdown("**Your text with web plagiarism highlighted:**")
+                    st.markdown(highlighted_target, unsafe_allow_html=True)
             if 'self_plagiarism' in results and results['self_plagiarism']:
                 st.subheader("🔄 Self-Plagiarism Detection")
                 
