@@ -506,13 +506,17 @@ def main():
             if len(uploaded_files) >= 1:
                 target_text = uploaded_files[0].read().decode('utf-8')
     
+
+
+
     # Analysis button
     if st.button("🔍 Start Analysis", type="primary"):
         if not target_text:
             st.error("Please provide text to analyze.")
             return
         
-        if detection_mode == "Compare Two Texts" and not source_text:
+        # Only require source text for direct comparison mode when web search is disabled
+        if detection_mode == "Compare Two Texts" and not source_text and not enable_web_search:
             st.error("Please provide both source and target texts for comparison.")
             return
         
