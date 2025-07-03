@@ -30,7 +30,7 @@ except LookupError:
         # Fallback to older punkt if punkt_tab fails
         nltk.download('punkt')
 
-class AIDetector:
+class WebSearcher:
     """Web search functionality for plagiarism detection."""
     
     def __init__(self):
@@ -142,6 +142,8 @@ class AIDetector:
             time.sleep(1)
         
         return web_sources[:num_sources]
+
+class AIDetector:
     """Simple AI-generated text detector using linguistic patterns."""
     
     def __init__(self):
@@ -743,154 +745,222 @@ def main():
                 for web_result in results['web_plagiarism']:
                     for match in web_result['matches']:
                         all_web_matches.append({
-                            'Source': web_result['source']['title'][:50] + "...",
+                            'Source': web_result['source']['title'],
                             'URL': web_result['source']['url'],
-                            'Similarity': f"{match['similarity']:.3f}",
-                            'Your Text': match['target_sentence'][:100] + "...",
-                            'Source Text': match['source_sentence'][:100] + "..."
+                            'Target Sentence': match['target_sentence'][:100] + "..." if len(match['target_sentence']) > 100 else match['target_sentence'],
+                            'Source Sentence': match['source_sentence'][:100] + "..." if len(match['source_sentence']) > 100 else match['source_sentence'],
+                            'Similarity': f"{match['similarity']:.3f}"
                         })
                 
                 if all_web_matches:
-                    # Sort by similarity
-                    all_web_matches.sort(key=lambda x: float(x['Similarity']), reverse=True)
-                    
-                    # Show top 20 matches
-                    matches_df = pd.DataFrame(all_web_matches[:20])
+                    matches_df = pd.DataFrame(all_web_matches)
                     st.dataframe(matches_df, use_container_width=True)
                     
-                    if len(all_web_matches) > 20:
-                        st.info(f"Showing top 20 matches out of {len(all_web_matches)} total web matches.")
-                
-                # Web source highlighting
-                if show_highlights:
-                    st.subheader("📝 Text with Web Matches Highlighted")
-                    
-                    all_target_indices = []
-                    for web_result in results['web_plagiarism']:
-                        all_target_indices.extend([m['target_index'] for m in web_result['matches']])
-                    
-                    highlighted_target = highlight_matches(
-                        target_text, target_sentences, all_target_indices, "#ff6b6b"
-                    )
-                    st.markdown("**Your text with web plagiarism highlighted:**")
-                    st.markdown(highlighted_target, unsafe_allow_html=True)
-            if 'self_plagiarism' in results and results['self_plagiarism']:
-                st.subheader("🔄 Self-Plagiarism Detection")
-                
-                self_matches = results['self_plagiarism'][:10]  # Show top 10
-                
-                for i, match in enumerate(self_matches):
-                    with st.expander(f"Match {i+1} - Similarity: {match['similarity']:.3f}"):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.markdown("**Sentence 1:**")
-                            st.write(match['sentence_1'])
-                        with col2:
-                            st.markdown("**Sentence 2:**")
-                            st.write(match['sentence_2'])
-            
-            # Cross-document plagiarism results
-            if 'cross_document' in results and results['cross_document']['matches']:
-                st.subheader("📋 Cross-Document Plagiarism")
-                
-                matches = results['cross_document']['matches']
-                
-                # Similarity distribution
-                if show_distribution and 'similarities' in results:
-                    st.subheader("Similarity Score Distribution")
-                    fig = create_similarity_histogram(results['similarities'], threshold)
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Detailed matches
-                st.subheader("🎯 Detected Matches")
-                
-                matches_df = pd.DataFrame([
-                    {
-                        'Similarity': f"{m['similarity']:.3f}",
-                        'Source Sentence': m['source_sentence'][:100] + "..." if len(m['source_sentence']) > 100 else m['source_sentence'],
-                        'Target Sentence': m['target_sentence'][:100] + "..." if len(m['target_sentence']) > 100 else m['target_sentence']
-                    }
-                    for m in matches[:20]
-                ])
-                
-                st.dataframe(matches_df, use_container_width=True)
-                
-                # Highlighted text
-                if show_highlights and source_text:
-                    st.subheader("📝 Highlighted Texts")
-                    
-                    source_sentences = detector.extract_sentences(source_text)
-                    source_match_indices = [m['source_index'] for m in matches]
-                    target_match_indices = [m['target_index'] for m in matches]
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("**Source Text:**")
-                        highlighted_source = highlight_matches(
-                            source_text, source_sentences, source_match_indices, "#ffeb3b"
-                        )
-                        st.markdown(highlighted_source, unsafe_allow_html=True)
-                    
-                    with col2:
-                        st.markdown("**Target Text:**")
-                        highlighted_target = highlight_matches(
-                            target_text, target_sentences, target_match_indices, "#ff9999"
-                        )
-                        st.markdown(highlighted_target, unsafe_allow_html=True)
-            
-            # Export functionality
-            if any(key in results for key in ['cross_document', 'self_plagiarism']):
-                st.subheader("💾 Export Results")
-                
-                export_data = []
-                
-                if 'cross_document' in results:
-                    for match in results['cross_document']['matches']:
-                        export_data.append({
-                            'Type': 'Cross-Document',
-                            'Similarity_Score': match['similarity'],
-                            'Source_Sentence': match['source_sentence'],
-                            'Target_Sentence': match['target_sentence'],
-                            'Source_Index': match['source_index'],
-                            'Target_Index': match['target_index']
-                        })
-                
-                if 'self_plagiarism' in results:
-                    for match in results['self_plagiarism']:
-                        export_data.append({
-                            'Type': 'Self-Plagiarism',
-                            'Similarity_Score': match['similarity'],
-                            'Source_Sentence': match['sentence_1'],
-                            'Target_Sentence': match['sentence_2'],
-                            'Source_Index': match['index_1'],
-                            'Target_Index': match['index_2']
-                        })
-                
-                if export_data:
-                    report_df = pd.DataFrame(export_data)
-                    csv_buffer = io.StringIO()
-                    report_df.to_csv(csv_buffer, index=False)
-                    csv_data = csv_buffer.getvalue()
-                    
+                    # Download matches as CSV
+                    csv = matches_df.to_csv(index=False)
                     st.download_button(
-                        label="📥 Download Detailed Report (CSV)",
-                        data=csv_data,
-                        file_name="plagiarism_analysis_report.csv",
+                        label="📥 Download Web Matches as CSV",
+                        data=csv,
+                        file_name="web_plagiarism_matches.csv",
                         mime="text/csv"
                     )
             
-            # No plagiarism detected
-            if not any(results.get(key, []) for key in ['cross_document', 'self_plagiarism']):
-                if 'cross_document' in results:
-                    st.success("🎉 No cross-document plagiarism detected!")
-                if 'self_plagiarism' in results:
-                    st.success("🎉 No self-plagiarism detected!")
-                st.info("Try adjusting the similarity threshold to see more potential matches.")
-        
+            # Cross-document plagiarism results
+            if 'cross_document' in results:
+                st.subheader("📋 Cross-Document Plagiarism Results")
+                
+                cross_data = results['cross_document']
+                if cross_data['matches']:
+                    # Create matches dataframe
+                    matches_data = []
+                    for match in cross_data['matches']:
+                        matches_data.append({
+                            'Source Sentence': match['source_sentence'][:100] + "..." if len(match['source_sentence']) > 100 else match['source_sentence'],
+                            'Target Sentence': match['target_sentence'][:100] + "..." if len(match['target_sentence']) > 100 else match['target_sentence'],
+                            'Similarity': f"{match['similarity']:.3f}",
+                            'Source Index': match['source_index'],
+                            'Target Index': match['target_index']
+                        })
+                    
+                    matches_df = pd.DataFrame(matches_data)
+                    st.dataframe(matches_df, use_container_width=True)
+                    
+                    # Download matches as CSV
+                    csv = matches_df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Cross-Document Matches as CSV",
+                        data=csv,
+                        file_name="cross_document_matches.csv",
+                        mime="text/csv"
+                    )
+                    
+                    # Show similarity distribution
+                    if show_distribution and 'similarities' in results:
+                        st.subheader("📊 Similarity Score Distribution")
+                        fig = create_similarity_histogram(results['similarities'], threshold)
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show highlighted text
+                    if show_highlights:
+                        st.subheader("🖍️ Highlighted Matches in Target Text")
+                        match_indices = [m['target_index'] for m in cross_data['matches']]
+                        highlighted_target = highlight_matches(target_text, target_sentences, match_indices)
+                        st.markdown(highlighted_target, unsafe_allow_html=True)
+                        
+                        st.subheader("🖍️ Highlighted Matches in Source Text")
+                        match_indices = [m['source_index'] for m in cross_data['matches']]
+                        source_sentences = detector.extract_sentences(source_text)
+                        highlighted_source = highlight_matches(source_text, source_sentences, match_indices, "#ff9800")
+                        st.markdown(highlighted_source, unsafe_allow_html=True)
+                else:
+                    st.success("✅ No cross-document plagiarism detected!")
+            
+            # Self-plagiarism results
+            if 'self_plagiarism' in results:
+                st.subheader("🔄 Self-Plagiarism Detection Results")
+                
+                self_matches = results['self_plagiarism']
+                if self_matches:
+                    # Create self-plagiarism dataframe
+                    self_data = []
+                    for match in self_matches:
+                        self_data.append({
+                            'First Sentence': match['sentence_1'][:100] + "..." if len(match['sentence_1']) > 100 else match['sentence_1'],
+                            'Second Sentence': match['sentence_2'][:100] + "..." if len(match['sentence_2']) > 100 else match['sentence_2'],
+                            'Similarity': f"{match['similarity']:.3f}",
+                            'First Index': match['index_1'],
+                            'Second Index': match['index_2']
+                        })
+                    
+                    self_df = pd.DataFrame(self_data)
+                    st.dataframe(self_df, use_container_width=True)
+                    
+                    # Download self-plagiarism matches as CSV
+                    csv = self_df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Self-Plagiarism Matches as CSV",
+                        data=csv,
+                        file_name="self_plagiarism_matches.csv",
+                        mime="text/csv"
+                    )
+                    
+                    # Show highlighted text for self-plagiarism
+                    if show_highlights:
+                        st.subheader("🖍️ Highlighted Self-Plagiarism in Text")
+                        all_match_indices = []
+                        for match in self_matches:
+                            all_match_indices.extend([match['index_1'], match['index_2']])
+                        highlighted_text = highlight_matches(target_text, target_sentences, all_match_indices, "#e91e63")
+                        st.markdown(highlighted_text, unsafe_allow_html=True)
+                else:
+                    st.success("✅ No self-plagiarism detected!")
+            
+            # Text Statistics
+            st.subheader("📈 Text Statistics")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Total Characters", len(target_text))
+            with col2:
+                word_count = len(target_text.split())
+                st.metric("Total Words", word_count)
+            with col3:
+                st.metric("Total Sentences", len(target_sentences))
+            with col4:
+                avg_sentence_length = word_count / len(target_sentences) if target_sentences else 0
+                st.metric("Avg Sentence Length", f"{avg_sentence_length:.1f}")
+            
+            # Additional insights
+            st.subheader("💡 Analysis Insights")
+            
+            insights = []
+            
+            # AI Detection insights
+            if 'ai_detection' in results:
+                ai_prob = results['ai_detection']['probability']
+                if ai_prob > 0.7:
+                    insights.append("🤖 **High AI probability detected**: The text shows strong patterns typical of AI-generated content, including formal language patterns and uniform sentence structures.")
+                elif ai_prob > 0.4:
+                    insights.append("🤖 **Moderate AI probability**: Some patterns suggest possible AI involvement, but human authorship is still likely.")
+                else:
+                    insights.append("✅ **Low AI probability**: The text appears to be human-written with natural language patterns.")
+            
+            # Web plagiarism insights
+            if 'web_plagiarism' in results and results['web_plagiarism']:
+                total_web_matches = sum(len(wr['matches']) for wr in results['web_plagiarism'])
+                unique_web_matches = len(set(sum([[m['target_index'] for m in wr['matches']] for wr in results['web_plagiarism']], [])))
+                web_plag_percentage = (unique_web_matches / len(target_sentences)) * 100
+                
+                if web_plag_percentage > 20:
+                    insights.append(f"🚨 **High web plagiarism detected**: {web_plag_percentage:.1f}% of sentences show similarity to web sources. Consider reviewing and properly citing sources.")
+                elif web_plag_percentage > 10:
+                    insights.append(f"⚠️ **Moderate web plagiarism detected**: {web_plag_percentage:.1f}% of sentences show similarity to web sources. Some citations may be needed.")
+                else:
+                    insights.append(f"✅ **Low web plagiarism**: Only {web_plag_percentage:.1f}% similarity to web sources detected.")
+            
+            # Cross-document insights
+            if 'cross_document' in results:
+                cross_data = results['cross_document']
+                plag_percentage = (cross_data['unique_plagiarized'] / cross_data['total_sentences']) * 100
+                
+                if plag_percentage > 30:
+                    insights.append(f"🚨 **High cross-document plagiarism**: {plag_percentage:.1f}% of sentences match the source document.")
+                elif plag_percentage > 15:
+                    insights.append(f"⚠️ **Moderate cross-document plagiarism**: {plag_percentage:.1f}% of sentences show similarity to the source.")
+                else:
+                    insights.append(f"✅ **Low cross-document plagiarism**: {plag_percentage:.1f}% similarity detected.")
+            
+            # Self-plagiarism insights
+            if 'self_plagiarism' in results:
+                self_matches = results['self_plagiarism']
+                if len(self_matches) > 5:
+                    insights.append(f"🔄 **Significant self-plagiarism detected**: {len(self_matches)} instances of repeated content found within the document.")
+                elif len(self_matches) > 0:
+                    insights.append(f"🔄 **Minor self-plagiarism detected**: {len(self_matches)} instances of repeated content found.")
+                else:
+                    insights.append("✅ **No self-plagiarism detected**: Content appears to be original throughout.")
+            
+            # Display insights
+            for insight in insights:
+                st.markdown(insight)
+            
+            # Recommendations
+            st.subheader("📋 Recommendations")
+            recommendations = []
+            
+            # Based on AI detection
+            if 'ai_detection' in results and results['ai_detection']['probability'] > 0.5:
+                recommendations.append("Consider adding more personal voice and varied sentence structures to make the text appear more naturally human-written.")
+            
+            # Based on plagiarism
+            if any([
+                'web_plagiarism' in results and results['web_plagiarism'],
+                'cross_document' in results and results['cross_document']['matches'],
+                'self_plagiarism' in results and results['self_plagiarism']
+            ]):
+                recommendations.append("Review flagged sections and ensure proper citations are included for any borrowed content.")
+                recommendations.append("Consider paraphrasing similar content to increase originality.")
+                recommendations.append("Use quotation marks for direct quotes and provide appropriate attributions.")
+            
+            if not recommendations:
+                recommendations.append("The text appears to be original. Continue maintaining good academic integrity practices.")
+            
+            for rec in recommendations:
+                st.markdown(f"• {rec}")
+            
         except Exception as e:
             st.error(f"An error occurred during analysis: {str(e)}")
-            st.error("Please check your input texts and try again.")
+            st.error("Please check your input and try again.")
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style='text-align: center; color: #666; padding: 20px;'>
+        <p>🔍 <strong>Advanced Plagiarism & AI Detection System</strong></p>
+        <p>Uses BERT embeddings for semantic similarity analysis | Web search for plagiarism detection | AI pattern recognition</p>
+        <p><small>⚠️ This tool is for educational and research purposes. Always verify results and consult institutional guidelines.</small></p>
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
