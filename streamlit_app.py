@@ -75,10 +75,11 @@ class WebSearcher:
                     continue
             
             return results
-            
+
         except Exception as e:
-            st.warning(f"Web search failed: {str(e)}")
+            print(f"Web search failed: {str(e)}")  # Use print instead of st.warning
             return []
+    
     
     def extract_text_from_url(self, url: str) -> str:
         """Extract text content from a URL."""
@@ -516,7 +517,7 @@ def main():
             return
         
         # Only require source text for direct comparison mode when web search is disabled
-        if detection_mode == "Compare Two Texts" and not source_text and not enable_web_search:
+        if detection_mode == "Compare Two Texts" and not source_text:
             st.error("Please provide both source and target texts for comparison.")
             return
         
@@ -537,19 +538,29 @@ def main():
             
             results = {}
             
+            
+
+            
             # Web plagiarism detection
-            if (detection_mode in ["Web Plagiarism Detection", "All Analysis"] and 
-                enable_web_search and not source_text):
+            if (detection_mode in ["Web Plagiarism Detection", "All Analysis"] and enable_web_search):
                 
                 status_text.text("🌐 Searching web for potential sources...")
                 progress_bar.progress(30)
                 
                 web_results = detector.search_web_sources(target_sentences, num_web_sources)
+                # Debug output
+                st.write(f"Debug: Found {len(web_results)} web sources")
+                for i, result in enumerate(web_results):
+                    st.write(f"Source {i+1}: {len(result.get('matches', []))} matches")
                 results['web_plagiarism'] = web_results
                 
                 if web_results:
                     status_text.text("📝 Analyzing web sources...")
                     progress_bar.progress(50)
+
+
+
+            
             
             # AI Detection
             if detection_mode in ["AI Content Detection", "All Analysis"]:
@@ -626,13 +637,15 @@ def main():
                     plagiarism_percentage = (results['cross_document']['unique_plagiarized'] / 
                                            results['cross_document']['total_sentences']) * 100
                     st.metric("Cross-Doc Plagiarism %", f"{plagiarism_percentage:.1f}%")
+
                 elif 'web_plagiarism' in results and results['web_plagiarism']:
                     # Calculate overall web plagiarism percentage
                     all_matches = []
                     for web_result in results['web_plagiarism']:
-                        all_matches.extend([m['target_index'] for m in web_result['matches']])
-                    unique_web_matches = len(set(all_matches))
-                    web_plag_percentage = (unique_web_matches / len(target_sentences)) * 100
+                        if 'matches' in web_result and web_result['matches']:
+                            all_matches.extend([m['target_index'] for m in web_result['matches']])
+                    unique_web_matches = len(set(all_matches)) if all_matches else 0
+                    web_plag_percentage = (unique_web_matches / len(target_sentences)) * 100 if len(target_sentences) > 0 else 0
                     st.metric("Web Plagiarism %", f"{web_plag_percentage:.1f}%")
                 elif 'self_plagiarism' in results:
                     self_plag_sentences = len(set([m['index_1'] for m in results['self_plagiarism']] + 
