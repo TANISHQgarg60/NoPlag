@@ -31,29 +31,171 @@ except LookupError:
         nltk.download('punkt')
 
 class WebSearcher:
-    """Web search functionality for plagiarism detection."""
+    """Enhanced web search functionality with multiple search engines."""
     
     def __init__(self):
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
+        self.timeout = 15
+        self.max_retries = 3
     
-    def search_bing(self, query: str, num_results: int = 5) -> List[Dict]:
-        """Search Bing for potential sources."""
+    def search_duckduckgo(self, query: str, num_results: int = 5) -> List[Dict]:
+        """Search DuckDuckGo for results."""
         try:
-            # Using Bing search (you could also use other search engines)
-            search_url = f"https://www.bing.com/search?q={quote_plus(query)}"
+            import requests
+            from urllib.parse import quote_plus
             
-            response = requests.get(search_url, headers=self.headers, timeout=10)
+            # DuckDuckGo search URL
+            search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+            
+            response = requests.get(search_url, headers=self.headers, timeout=self.timeout)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
             results = []
             
-            # Extract search results
-            for result in soup.find_all('li', class_='b_algo')[:num_results]:
+            # Extract search results from DuckDuckGo
+            for result in soup.find_all('div', class_='result')[:num_results]:
                 try:
-                    title_elem = result.find('h2')
+                    title_elem = result.find('a', class_='result__a')
+                    snippet_elem = result.find('a', class_='result__snippet')
+                    
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                        url = title_elem.get('href', '')
+                        snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
+                        
+                        # Clean URL (DuckDuckGo sometimes adds redirect)
+                        if url.startswith('/l/?uddg='):
+                            url = url.split('uddg=')[1] if 'uddg=' in url else url
+                        
+                        if url.startswith('http'):
+                            results.append({
+                                'title': title,
+                                'url': url,
+                                'snippet': snippet,
+                                'source': 'DuckDuckGo'
+                            })
+                except Exception:
+                    continue
+            
+            return results
+            
+        except Exception as e:
+            print(f"DuckDuckGo search failed: {str(e)}")
+            return []
+    
+    def search_google_scholar(self, query: str, num_results: int = 3) -> List[Dict]:
+        """Search Google Scholar for academic sources."""
+        try:
+            search_url = f"https://scholar.google.com/scholar?q={quote_plus(query)}&hl=en"
+            
+            response = requests.get(search_url, headers=self.headers, timeout=self.timeout)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            results = []
+            
+            for result in soup.find_all('div', class_='gs_r')[:num_results]:
+                try:
+                    title_elem = result.find('h3', class_='gs_rt')
+                    link_elem = title_elem.find('a') if title_elem else None
+                    snippet_elem = result.find('div', class_='gs_rs')
+                    
+                    if title_elem and link_elem:
+                        title = title_elem.get_text(strip=True)
+                        url = link_elem.get('href', '')
+                        snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
+                        
+                        if url.startswith('http'):
+                            results.append({
+                                'title': title,
+                                'url': url,
+                                'snippet': snippet,
+                                'source': 'Google Scholar'
+                            })
+                except Exception:
+                    continue
+            
+            return results
+            
+        except Exception as e:
+            print(f"Google Scholar search failed: {str(e)}")
+            return []
+    
+    def search_searx(self, query: str, num_results: int = 5) -> List[Dict]:
+        """Search using SearXNG instance (privacy-focused)."""
+        try:
+            # Public SearXNG instances
+            searx_instances = [
+                "https://searx.be",
+                "https://searx.info",
+                "https://searx.xyz"
+            ]
+            
+            for instance in searx_instances:
+                try:
+                    search_url = f"{instance}/search"
+                    params = {
+                        'q': query,
+                        'format': 'json',
+                        'engines': 'google,bing,duckduckgo'
+                    }
+                    
+                    response = requests.get(search_url, params=params, headers=self.headers, timeout=10)
+                    response.raise_for_status()
+                    
+                    data = response.json()
+                    results = []
+                    
+                    for result in data.get('results', [])[:num_results]:
+                        if result.get('url') and result.get('title'):
+                            results.append({
+                                'title': result['title'],
+                                'url': result['url'],
+                                'snippet': result.get('content', ''),
+                                'source': 'SearXNG'
+                            })
+                    
+                    if results:
+                        return results
+                        
+                except Exception:
+                    continue
+            
+            return []
+            
+        except Exception as e:
+            print(f"SearXNG search failed: {str(e)}")
+            return []
+    
+    def search_bing(self, query: str, num_results: int = 5) -> List[Dict]:
+        """Enhanced Bing search with better parsing."""
+        try:
+            search_url = f"https://www.bing.com/search?q={quote_plus(query)}"
+            
+            response = requests.get(search_url, headers=self.headers, timeout=self.timeout)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            results = []
+            
+            # Try multiple selectors for Bing results
+            selectors = [
+                'li.b_algo',
+                'div.b_algo',
+                'li[class*="algo"]'
+            ]
+            
+            for selector in selectors:
+                search_results = soup.select(selector)
+                if search_results:
+                    break
+            
+            for result in search_results[:num_results]:
+                try:
+                    title_elem = result.find('h2') or result.find('h3')
                     url_elem = result.find('a')
                     snippet_elem = result.find('p') or result.find('div', class_='b_caption')
                     
@@ -62,85 +204,149 @@ class WebSearcher:
                         url = url_elem.get('href', '')
                         snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
                         
-                        # Skip if URL is not valid
-                        if not url.startswith('http'):
-                            continue
-                            
-                        results.append({
-                            'title': title,
-                            'url': url,
-                            'snippet': snippet
-                        })
-                except Exception as e:
+                        if url.startswith('http'):
+                            results.append({
+                                'title': title,
+                                'url': url,
+                                'snippet': snippet,
+                                'source': 'Bing'
+                            })
+                except Exception:
                     continue
             
             return results
-
+            
         except Exception as e:
-            print(f"Web search failed: {str(e)}")  # Use print instead of st.warning
+            print(f"Bing search failed: {str(e)}")
             return []
     
-    
     def extract_text_from_url(self, url: str) -> str:
-        """Extract text content from a URL."""
+        """Enhanced text extraction with better content filtering."""
         try:
-            response = requests.get(url, headers=self.headers, timeout=15)
+            # Skip certain file types
+            skip_extensions = ['.pdf', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx']
+            if any(url.lower().endswith(ext) for ext in skip_extensions):
+                return ""
+            
+            response = requests.get(url, headers=self.headers, timeout=self.timeout)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Remove script and style elements
-            for script in soup(["script", "style"]):
-                script.decompose()
+            # Remove unwanted elements
+            for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'menu']):
+                element.decompose()
             
-            # Get text content
-            text = soup.get_text()
+            # Try to find main content areas
+            main_content = (
+                soup.find('main') or 
+                soup.find('article') or 
+                soup.find('div', class_='content') or 
+                soup.find('div', id='content') or
+                soup.find('div', class_='post-content') or
+                soup
+            )
             
-            # Clean up whitespace
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = ' '.join(chunk for chunk in chunks if chunk)
+            # Extract text from paragraphs and headings
+            text_elements = main_content.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li'])
+            text_parts = []
             
-            return text[:10000]  # Limit to first 10k characters
+            for elem in text_elements:
+                text = elem.get_text(strip=True)
+                if len(text) > 20:  # Only include substantial text
+                    text_parts.append(text)
+            
+            full_text = ' '.join(text_parts)
+            
+            # Clean up the text
+            full_text = re.sub(r'\s+', ' ', full_text)
+            full_text = re.sub(r'[^\w\s.,!?;:()-]', '', full_text)
+            
+            return full_text[:15000]  # Increase limit for better analysis
             
         except Exception as e:
+            print(f"Failed to extract text from {url}: {str(e)}")
             return ""
     
     def search_for_plagiarism(self, sentences: List[str], num_sources: int = 5) -> List[Dict]:
-        """Search the web for potential plagiarism sources."""
+        """Enhanced plagiarism search with multiple search engines."""
         web_sources = []
         
-        # Select representative sentences for searching
-        search_sentences = sentences[:3] if len(sentences) > 3 else sentences
+        # Select best sentences for searching (longer, more specific ones)
+        search_sentences = []
+        for sentence in sentences:
+            if len(sentence) > 50 and len(sentence) < 200:  # Good length for search
+                search_sentences.append(sentence)
+        
+        # Fallback to first few sentences if no good ones found
+        if not search_sentences:
+            search_sentences = sentences[:3]
+        
+        # Limit to top 5 sentences for searching
+        search_sentences = search_sentences[:5]
         
         for i, sentence in enumerate(search_sentences):
-            # Create search query from sentence (use first 60 characters)
-            query = sentence[:60].strip()
-            if len(query) < 20:  # Skip very short sentences
-                continue
+            # Create multiple search queries from the sentence
+            queries = []
+            
+            # Full sentence in quotes
+            if len(sentence) > 30:
+                queries.append(f'"{sentence[:80]}"')
+            
+            # Key phrases from sentence
+            words = sentence.split()
+            if len(words) > 6:
+                mid_point = len(words) // 2
+                key_phrase = ' '.join(words[mid_point-3:mid_point+3])
+                queries.append(f'"{key_phrase}"')
+            
+            # Search with multiple engines
+            search_engines = [
+                ('duckduckgo', self.search_duckduckgo),
+                ('bing', self.search_bing),
+                ('searx', self.search_searx),
+                ('scholar', self.search_google_scholar)
+            ]
+            
+            for query in queries:
+                for engine_name, search_func in search_engines:
+                    try:
+                        if engine_name == 'scholar' and i > 0:  # Limit scholar searches
+                            continue
+                            
+                        search_results = search_func(query, 2)
+                        
+                        for result in search_results:
+                            # Check if URL already exists
+                            if result['url'] not in [ws['url'] for ws in web_sources]:
+                                content = self.extract_text_from_url(result['url'])
+                                if content and len(content) > 100:
+                                    web_sources.append({
+                                        'title': result['title'],
+                                        'url': result['url'],
+                                        'content': content,
+                                        'snippet': result['snippet'],
+                                        'search_sentence': sentence,
+                                        'search_engine': result.get('source', engine_name),
+                                        'search_query': query
+                                    })
+                        
+                        # Don't exceed the limit
+                        if len(web_sources) >= num_sources:
+                            break
+                            
+                    except Exception as e:
+                        print(f"Search engine {engine_name} failed: {str(e)}")
+                        continue
                 
-            # Search for this sentence
-            search_results = self.search_bing(f'"{query}"', num_results=3)
+                if len(web_sources) >= num_sources:
+                    break
             
-            for result in search_results:
-                if result['url'] not in [ws['url'] for ws in web_sources]:
-                    # Extract content from URL
-                    content = self.extract_text_from_url(result['url'])
-                    if content:
-                        web_sources.append({
-                            'title': result['title'],
-                            'url': result['url'],
-                            'content': content,
-                            'snippet': result['snippet'],
-                            'search_sentence': sentence
-                        })
-            
-            # Don't exceed the limit
             if len(web_sources) >= num_sources:
                 break
                 
-            # Add delay between searches to be respectful
-            time.sleep(1)
+            # Add delay between searches
+            time.sleep(2)
         
         return web_sources[:num_sources]
 
